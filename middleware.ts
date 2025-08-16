@@ -4,18 +4,27 @@ import { createServerClient } from "@supabase/ssr";
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // Allow login and static assets
-  if (pathname.startsWith("/login") || pathname.startsWith("/_next") || pathname === "/favicon.ico") {
+  // allow auth routes + assets
+  if (
+    pathname.startsWith("/login") ||
+    pathname.startsWith("/register") ||
+    pathname.startsWith("/_next") ||
+    pathname === "/favicon.ico"
+  ) {
     return NextResponse.next();
   }
 
-  const res = NextResponse.next();
+  // pass headers so supabase can refresh cookies if needed
+  const res = NextResponse.next({ request: { headers: req.headers } });
+
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        getAll() { return req.cookies.getAll(); },
+        getAll() {
+          return req.cookies.getAll().map(c => ({ name: c.name, value: c.value }));
+        },
         setAll(cookiesToSet) {
           cookiesToSet.forEach(({ name, value, options }) => {
             res.cookies.set(name, value, options);
@@ -32,6 +41,7 @@ export async function middleware(req: NextRequest) {
     url.searchParams.set("redirectedFrom", pathname);
     return NextResponse.redirect(url);
   }
+
   return res;
 }
 
