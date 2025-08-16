@@ -1,11 +1,13 @@
-/** @type {import('tailwindcss').Config} */
-module.exports = {
+import type { Config } from "tailwindcss";
+
+const config: Config = {
+  darkMode: "class",
   content: [
-    "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}",
+    "./app/**/*.{ts,tsx}",
+    "./components/**/*.{ts,tsx}",
   ],
   theme: {
-    extend: {
+   extend: {
       colors: {
         primary: '#503016',
 
@@ -57,7 +59,6 @@ module.exports = {
         500: "#67748e",
         600: "#627594",
         650: "#8097bf",
-        650: "#5974a2",
         700: "#344767",
         750: "#1e2e4a",
         800: "#3a416f",
@@ -483,10 +484,10 @@ module.exports = {
       "1/10": "10%",
       "1/2": "50%",
     },
-    height: {
-      '32': '8rem',
-      '40': '10rem',
-    },
+    // height: {
+    //   '32': '8rem',
+    //   '40': '10rem',
+    // },
     margin: {
       '32px': '32px',
       '40px': '10rem',
@@ -1017,10 +1018,6 @@ module.exports = {
       disc: "disc",
       decimal: "decimal",
     },
-    margin: ({ theme }) => ({
-      auto: "auto",
-      ...theme("spacing"),
-    }),
     maxHeight: ({ theme }) => ({
       ...theme("spacing"),
       full: "100%",
@@ -1033,7 +1030,7 @@ module.exports = {
       "70-screen": "70vh",
       "50-screen": "50vh",
     }),
-    maxWidth: ({ theme, breakpoints }) => ({
+    maxWidth: ({ theme }) => ({
       ...theme("spacing"),
       sidebar: "15.625rem",
       none: "none",
@@ -1054,7 +1051,6 @@ module.exports = {
       max: "max-content",
       fit: "fit-content",
       prose: "65ch",
-      ...breakpoints(theme("screens")),
     }),
     minHeight: ({ theme }) => ({
       auto: "auto",
@@ -1398,9 +1394,6 @@ module.exports = {
       sticky: "1020",
     },
   },
-
-  variants: {
-    display: ["responsive", "dropdown"],
-  },
   plugins: [],
-}
+};
+export default config;
