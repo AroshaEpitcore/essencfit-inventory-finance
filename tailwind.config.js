@@ -10,7 +10,7 @@ content: [
     extend: {
       // Only ADD your colors here; don't replace the whole palette
       colors: {
-        primary: "#503016",
+        primary: "#F54927",
         gold: {
           100: "#978667",
           200: "#555",
