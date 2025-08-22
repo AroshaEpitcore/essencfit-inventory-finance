@@ -20,7 +20,7 @@ export default function Sidebar() {
   return (
     <aside className="hidden md:flex w-64 shrink-0 flex-col bg-[#0b1220] text-white min-h-screen sticky top-0">
       <div className="p-4 text-lg font-bold">EssenceFit Admin</div>
-      <nav className="px-2 space-y-1">
+      <nav className="px-2 space-y-2">
         {nav.map(item => {
           const Icon = item.icon;
           const active = pathname.startsWith(item.href);

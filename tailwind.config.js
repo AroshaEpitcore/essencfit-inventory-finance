@@ -27,7 +27,7 @@ content: [
       },
       // If you're using Lato via next/font:
      fontFamily: {
-        sans: ['var(--font-lato)', 'Lato', 'sans-serif'],
+        sans: ["var(--font-inter)", "Inter", "ui-sans-serif", "system-ui", "sans-serif"],
       },
       boxShadow: {
         card: "0px 2px 100px rgba(0, 0, 0, 0.1)",

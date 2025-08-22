@@ -1,11 +1,12 @@
 import "./globals.css";
 import { Toaster } from "react-hot-toast";
-import { Lato } from "next/font/google";
+import { Inter } from "next/font/google";
 
-const lato = Lato({
+const inter = Inter({
   subsets: ["latin"],
-  weight: ["100", "300", "400", "700", "900"],
-  variable: "--font-lato",
+  weight: ["100","200","300","400","500","600","700","800","900"], // all weights
+         // adjust if you need more
+  variable: "--font-inter",          // <-- CSS variable
   display: "swap",
 });
 
@@ -16,8 +17,9 @@ export const metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning className={lato.variable}>
-      <body className={lato.className}>
+    <html lang="en" suppressHydrationWarning className={inter.variable}>
+      {/* Map Tailwind's font-sans to Inter via the variable below */}
+      <body className="font-sans">
         {children}
         <Toaster position="top-right" />
       </body>
