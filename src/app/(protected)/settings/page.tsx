@@ -6,7 +6,6 @@ import toast from "react-hot-toast";
 
 // --------------------------- Types ---------------------------
 type KVRow = { key: string; value: string };
-type Option = { id: string; name: string };
 
 type ProfileRow = {
   id: string;
@@ -58,7 +57,6 @@ function downloadCSV(csv: string, filename: string) {
   URL.revokeObjectURL(url);
 }
 function parseCSV(text: string): string[][] {
-  // super-light CSV parser (no quotes inside quotes edge-cases)
   return text
     .trim()
     .split(/\r?\n/)
@@ -79,9 +77,10 @@ export default function Settings() {
   // gate admin sections
   const [isAdmin, setIsAdmin] = useState(false);
 
-  // low stock threshold
+  // low stock threshold (from settings table)
   const [threshold, setThreshold] = useState<number | "">("");
   const [loadingThreshold, setLoadingThreshold] = useState(false);
+  const [hasSettingsTable, setHasSettingsTable] = useState<boolean | null>(null); // null = checking
 
   // users
   const [users, setUsers] = useState<ProfileRow[]>([]);
@@ -107,23 +106,46 @@ export default function Settings() {
     })().catch((e) => toast.error(String(e)));
   }, [supabase]);
 
-  // --------------------------- Threshold (settings table) ---------------------------
+  // --------------------------- Threshold (handle missing settings table) ---------------------------
   useEffect(() => {
     (async () => {
       setLoadingThreshold(true);
-      const { data, error } = await supabase
-        .from("settings")
-        .select("key, value")
-        .eq("key", "low_stock_threshold")
-        .maybeSingle()
-        .returns<KVRow | null>();
+      try {
+        const { data, error } = await supabase
+          .from("settings")
+          .select("key, value")
+          .eq("key", "low_stock_threshold")
+          .maybeSingle()
+          .returns<KVRow | null>();
+
+        if (error) {
+          // If table is missing or not exposed, PostgREST returns this "schema cache" style error
+          const msg = String(error.message || "");
+          if (msg.includes("schema cache") || msg.includes("Could not find the table 'public.settings'")) {
+            setHasSettingsTable(false);
+            setThreshold(""); // keep empty & disable Save
+            return;
+          }
+          toast.error(error.message);
+          return;
+        }
+
+        setHasSettingsTable(true);
+        setThreshold(data ? Number(data.value ?? 0) : 0);
+      } finally {
+        setLoadingThreshold(false);
+      }
+    })().catch((e) => {
       setLoadingThreshold(false);
-      if (error) return toast.error(error.message);
-      setThreshold(data ? Number(data.value ?? 0) : 0);
-    })().catch((e) => toast.error(String(e)));
+      toast.error(String(e));
+    });
   }, [supabase]);
 
   async function saveThreshold() {
+    if (!hasSettingsTable) {
+      toast.error("The 'settings' table is missing. See the SQL instructions below to create it.");
+      return;
+    }
     const num = Number(threshold || 0);
     const { error } = await supabase
       .from("settings")
@@ -302,6 +324,50 @@ export default function Settings() {
       {/* Low-stock threshold */}
       <section className="rounded-xl bg-white dark:bg-gray-800 shadow-card p-4">
         <h2 className="font-semibold mb-3">Low-stock threshold (default)</h2>
+
+        {/* warn if the settings table is missing */}
+        {hasSettingsTable === false && (
+          <div className="mb-3 rounded-md border border-yellow-400 bg-yellow-50 text-yellow-800 p-3 text-sm">
+            The table <b>public.settings</b> does not exist (or isn’t exposed). Create it with:
+            <pre className="mt-2 p-2 bg-yellow-100 rounded text-xs overflow-x-auto">
+{`create table if not exists public.settings (
+  key   text primary key,
+  value text not null
+);
+
+alter table public.settings enable row level security;
+
+-- Adjust policies to your needs; this example allows any authenticated user to read/write.
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies where schemaname = 'public' and tablename = 'settings' and policyname = 'settings_select_auth'
+  ) then
+    create policy settings_select_auth on public.settings
+      for select using (auth.role() = 'authenticated');
+  end if;
+
+  if not exists (
+    select 1 from pg_policies where schemaname = 'public' and tablename = 'settings' and policyname = 'settings_ins_auth'
+  ) then
+    create policy settings_ins_auth on public.settings
+      for insert with check (auth.role() = 'authenticated');
+  end if;
+
+  if not exists (
+    select 1 from pg_policies where schemaname = 'public' and tablename = 'settings' and policyname = 'settings_upd_auth'
+  ) then
+    create policy settings_upd_auth on public.settings
+      for update using (auth.role() = 'authenticated');
+  end if;
+end $$;`}
+            </pre>
+            <div className="mt-1">
+              After running the SQL (in Supabase SQL editor), refresh this page.
+            </div>
+          </div>
+        )}
+
         <div className="flex items-end gap-3">
           <label className="text-sm">
             <div className="mb-1 text-gray-500">Pieces</div>
@@ -311,16 +377,19 @@ export default function Settings() {
               className="rounded-md border bg-transparent p-2 w-32"
               value={threshold}
               onChange={(e) => setThreshold(e.target.value === "" ? "" : Number(e.target.value))}
-              disabled={loadingThreshold}
+              disabled={loadingThreshold || hasSettingsTable === false}
             />
           </label>
-          <button onClick={saveThreshold} className="rounded-md bg-primary text-white px-4 py-2" disabled={loadingThreshold}>
+          <button
+            onClick={saveThreshold}
+            className="rounded-md bg-primary text-white px-4 py-2"
+            disabled={loadingThreshold || hasSettingsTable !== true}
+          >
             Save
           </button>
         </div>
         <p className="text-xs text-gray-500 mt-2">
-          Used as a default when computing low-stock alerts (variants can still override if your schema supports per-item
-          thresholds).
+          Used as a default when computing low-stock alerts (variants can still override if your schema supports per-item thresholds).
         </p>
       </section>
 
@@ -475,40 +544,66 @@ export default function Settings() {
           {/* Import */}
           <div>
             <div className="text-sm text-gray-500 mb-2">Import CSV</div>
-            <div className="flex items-end gap-2">
-              <label className="text-sm">
-                <div className="mb-1 text-gray-500">Target table</div>
-                <select
-                  className="rounded-md border bg-transparent p-2"
-                  value={importKind}
-                  onChange={(e) => setImportKind(e.target.value as ImportKind)}
-                >
-                  <option value="categories">categories</option>
-                  <option value="sizes">sizes</option>
-                  <option value="colors">colors</option>
-                </select>
-              </label>
-              <label className="text-sm">
-                <div className="mb-1 text-gray-500">CSV file</div>
-                <input
-                  type="file"
-                  accept=".csv,text/csv"
-                  className="rounded-md border bg-transparent p-2 w-64"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) void handleImport(f);
-                  }}
-                  disabled={importing}
-                />
-              </label>
-              {importing && <span className="text-sm text-gray-500">Importing…</span>}
-            </div>
-            <p className="text-xs text-gray-500 mt-2">
-              CSV must include a <code>name</code> column; optional <code>id</code> column to upsert.
-            </p>
+            <ImportBlock
+              importKindDefault="categories"
+              onImport={handleImport}
+              importing={importing}
+              setImporting={setImporting}
+              setImportKind={setImportKind}
+            />
           </div>
         </div>
       </section>
     </div>
+  );
+}
+
+function ImportBlock(props: {
+  importKindDefault: "categories" | "sizes" | "colors";
+  onImport: (file: File) => Promise<void>;
+  importing: boolean;
+  setImporting: (b: boolean) => void;
+  setImportKind: (k: "categories" | "sizes" | "colors") => void;
+}) {
+  const { importKindDefault, onImport, importing, setImportKind } = props;
+  const [kind, setKind] = useState<typeof importKindDefault>(importKindDefault);
+  return (
+    <>
+      <div className="flex items-end gap-2">
+        <label className="text-sm">
+          <div className="mb-1 text-gray-500">Target table</div>
+          <select
+            className="rounded-md border bg-transparent p-2"
+            value={kind}
+            onChange={(e) => {
+              const v = e.target.value as "categories" | "sizes" | "colors";
+              setKind(v);
+              setImportKind(v);
+            }}
+          >
+            <option value="categories">categories</option>
+            <option value="sizes">sizes</option>
+            <option value="colors">colors</option>
+          </select>
+        </label>
+        <label className="text-sm">
+          <div className="mb-1 text-gray-500">CSV file</div>
+          <input
+            type="file"
+            accept=".csv,text/csv"
+            className="rounded-md border bg-transparent p-2 w-64"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void onImport(f);
+            }}
+            disabled={importing}
+          />
+        </label>
+        {importing && <span className="text-sm text-gray-500">Importing…</span>}
+      </div>
+      <p className="text-xs text-gray-500 mt-2">
+        CSV must include a <code>name</code> column; optional <code>id</code> column to upsert.
+      </p>
+    </>
   );
 }
