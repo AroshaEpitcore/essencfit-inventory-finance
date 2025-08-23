@@ -8,7 +8,6 @@ content: [
   ],
   theme: {
     extend: {
-      // Only ADD your colors here; don't replace the whole palette
       colors: {
         primary: "#F54927",
         gold: {
@@ -25,7 +24,6 @@ content: [
           900: "#333",
         },
       },
-      // If you're using Lato via next/font:
      fontFamily: {
         sans: ["var(--font-inter)", "Inter", "ui-sans-serif", "system-ui", "sans-serif"],
       },
