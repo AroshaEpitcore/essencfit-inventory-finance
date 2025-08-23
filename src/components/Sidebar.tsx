@@ -1,14 +1,15 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, Boxes, Receipt, Wallet, FilePieChart, Truck, Settings, Package } from "lucide-react";
+import { BarChart3, Boxes, Receipt, Wallet, FilePieChart, Truck, Settings, Package, ShoppingCart } from "lucide-react";
 import clsx from "clsx";
 
 const nav = [
   { href: "/dashboard", label: "Dashboard", icon: BarChart3 },
   { href: "/inventory", label: "Inventory", icon: Boxes },
-    { href: "/stock", label: "Stock", icon: Package },
+  { href: "/stock", label: "Stock", icon: Package },
   { href: "/sales", label: "Sales", icon: Receipt },
+  { href: "/orders", label: "Orders", icon: ShoppingCart },
   { href: "/expenses", label: "Expenses", icon: Wallet },
   { href: "/reports", label: "Reports", icon: FilePieChart },
   { href: "/suppliers", label: "Suppliers", icon: Truck },
