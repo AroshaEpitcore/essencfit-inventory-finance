@@ -16,7 +16,7 @@ type ProductVariantRow = {
 
 type PurchaseInsert = {
   variant_id: string;
-  qty: number;
+  qty: number;          // positive for add, negative for remove
   cost_price: number;
 };
 
@@ -28,6 +28,7 @@ type Cell = {
   variantId: string | null;
   currentQty: number;
   addQty: number;
+  removeQty: number;
   cost: number;
 };
 
@@ -44,6 +45,11 @@ type ReassignState = {
   from?: Option;
   toId: string;
 };
+
+type GridMode = "add" | "remove";
+
+const DEFAULT_SIZE_NAME = "N/A";
+const DEFAULT_COLOR_NAME = "N/A";
 
 export default function StockPage() {
   const supabase = createClient();
@@ -69,12 +75,25 @@ export default function StockPage() {
   const [pCost, setPCost] = useState<number | "">("");
   const [pSell, setPSell] = useState<number | "">("");
 
-  // Matrix state
+  // Matrix state (optional)
   const [cells, setCells] = useState<Cell[]>([]);
+  const [gridMode, setGridMode] = useState<GridMode>("add");
   const selectedProduct = useMemo(
     () => products.find((p) => p.id === selProd) ?? null,
     [products, selProd]
   );
+
+  // Opening stock (no size/color)
+  const [openQty, setOpenQty] = useState<number | "">("");
+  const [openCost, setOpenCost] = useState<number | "">("");
+  const [openSell, setOpenSell] = useState<number | "">("");
+
+  // Quick single-variant picker state
+  const [qMode, setQMode] = useState<GridMode>("add");
+  const [qSize, setQSize] = useState<string>("");
+  const [qColor, setQColor] = useState<string>("");
+  const [qQty, setQQty] = useState<number | "">("");
+  const [qCost, setQCost] = useState<number | "">("");
 
   // Pretty dialogs
   const [confirm, setConfirm] = useState<ConfirmState>({ open: false });
@@ -114,7 +133,6 @@ export default function StockPage() {
         .select("id,name,cost_price")
         .eq("category_id", selCat)
         .order("name");
-
       if (error) {
         toast.error(error.message);
         return;
@@ -128,14 +146,13 @@ export default function StockPage() {
     })();
   }, [supabase, selCat]);
 
-  // Build Size × Color matrix for selected product
+  // Build Size × Color matrix (optional)
   useEffect(() => {
     (async () => {
       if (!selProd) {
         setCells([]);
         return;
       }
-
       const defaultCost = selectedProduct?.cost_price ?? 0;
 
       const { data: vData, error } = await supabase
@@ -157,8 +174,7 @@ export default function StockPage() {
 
       const byKey: Record<string, { id: string; qty: number }> = {};
       variants.forEach((v) => {
-        const key = `${v.size_id}::${v.color_id}`;
-        byKey[key] = { id: v.id, qty: Number(v.qty ?? 0) };
+        byKey[`${v.size_id}::${v.color_id}`] = { id: v.id, qty: Number(v.qty ?? 0) };
       });
 
       const grid: Cell[] = [];
@@ -174,6 +190,7 @@ export default function StockPage() {
             variantId: hit?.id ?? null,
             currentQty: hit ? hit.qty : 0,
             addQty: 0,
+            removeQty: 0,
             cost: defaultCost,
           });
         }
@@ -183,7 +200,7 @@ export default function StockPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selProd, sizes, colors]);
 
-  // ------- helpers to refresh lists -------
+  // ------- refresh helpers -------
   async function refreshCategories() {
     const { data } = await supabase.from("categories").select("id,name").order("name");
     setCategories((data as Option[] | null) ?? []);
@@ -197,11 +214,14 @@ export default function StockPage() {
     setColors((data as Option[] | null) ?? []);
   }
 
-  // ------- LOOKUP add -------
+  // ------- add lookups -------
   async function addCategory() {
     if (!newCategory.trim()) return;
     const { error } = await supabase.from("categories").insert({ name: newCategory.trim() });
-    if (error) return toast.error(error.message);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
     toast.success("Category added");
     setNewCategory("");
     await refreshCategories();
@@ -209,7 +229,10 @@ export default function StockPage() {
   async function addSize() {
     if (!newSize.trim()) return;
     const { error } = await supabase.from("sizes").insert({ name: newSize.trim() });
-    if (error) return toast.error(error.message);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
     toast.success("Size added");
     setNewSize("");
     await refreshSizes();
@@ -217,13 +240,16 @@ export default function StockPage() {
   async function addColor() {
     if (!newColor.trim()) return;
     const { error } = await supabase.from("colors").insert({ name: newColor.trim() });
-    if (error) return toast.error(error.message);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
     toast.success("Color added");
     setNewColor("");
     await refreshColors();
   }
 
-  // ------- CATEGORY delete / reassign flow -------
+  // ------- category delete / reassign -------
   async function countProductsInCategory(categoryId: string) {
     const { count, error } = await supabase
       .from("products")
@@ -239,9 +265,7 @@ export default function StockPage() {
   function askDeleteCategory(item: Option) {
     (async () => {
       const usage = await countProductsInCategory(item.id);
-
       if (usage > 0) {
-        // open reassign dialog
         const hasOther = categories.some((c) => c.id !== item.id);
         if (!hasOther) {
           toast.error(
@@ -252,18 +276,21 @@ export default function StockPage() {
         setReassign({ open: true, from: item, toId: "" });
         return;
       }
-
-      // safe to delete directly
       openConfirm({
         title: "Delete category",
         message: `Delete “${item.name}”?`,
         confirmLabel: "Delete",
         onConfirm: async () => {
           const { error } = await supabase.from("categories").delete().eq("id", item.id);
-          if (error) toast.error(error.message);
-          else {
+          if (error) {
+            toast.error(error.message);
+          } else {
             toast.success("Category deleted");
-            if (selCat === item.id) { setSelCat(""); setSelProd(""); setCells([]); }
+            if (selCat === item.id) {
+              setSelCat("");
+              setSelProd("");
+              setCells([]);
+            }
             await refreshCategories();
           }
           closeConfirm();
@@ -272,34 +299,26 @@ export default function StockPage() {
     })();
   }
 
-  async function reassignAndDelete() {
+  async function reassignAndDelete(): Promise<void> {
     if (!reassign.from || !reassign.toId) return;
     if (reassign.toId === reassign.from.id) return;
 
-    // Move all products from -> to
     const { error: uErr } = await supabase
       .from("products")
       .update({ category_id: reassign.toId })
       .eq("category_id", reassign.from.id);
-
     if (uErr) {
       toast.error(uErr.message);
       return;
     }
 
-    // Now delete the empty category
-    const { error: dErr } = await supabase
-      .from("categories")
-      .delete()
-      .eq("id", reassign.from.id);
-
+    const { error: dErr } = await supabase.from("categories").delete().eq("id", reassign.from.id);
     if (dErr) {
       toast.error(dErr.message);
       return;
     }
 
     toast.success("Products reassigned and category deleted");
-    // Reset selection if we were on that category
     if (selCat === reassign.from.id) {
       setSelCat("");
       setSelProd("");
@@ -309,9 +328,12 @@ export default function StockPage() {
     await refreshCategories();
   }
 
-  // ------- PRODUCT create/delete -------
+  // ------- product create/delete -------
   async function createProduct() {
-    if (!pName.trim() || !selCat) return toast.error("Pick a category and enter product name");
+    if (!pName.trim() || !selCat) {
+      toast.error("Pick a category and enter product name");
+      return;
+    }
     const cost = Number(pCost || 0);
     const sell = Number(pSell || 0);
     const { error } = await supabase.from("products").insert({
@@ -321,9 +343,15 @@ export default function StockPage() {
       cost_price: cost,
       selling_price: sell,
     });
-    if (error) return toast.error(error.message);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
     toast.success("Product created");
-    setPName(""); setPSku(""); setPCost(""); setPSell("");
+    setPName("");
+    setPSku("");
+    setPCost("");
+    setPSell("");
     const { data } = await supabase
       .from("products")
       .select("id,name,cost_price")
@@ -338,7 +366,10 @@ export default function StockPage() {
   }
 
   function askDeleteProduct() {
-    if (!selProd) return toast.error("Select a product first.");
+    if (!selProd) {
+      toast.error("Select a product first.");
+      return;
+    }
     const prod = products.find((p) => p.id === selProd);
     openConfirm({
       title: "Delete product",
@@ -346,8 +377,9 @@ export default function StockPage() {
       confirmLabel: "Delete",
       onConfirm: async () => {
         const { error } = await supabase.from("products").delete().eq("id", selProd);
-        if (error) toast.error(error.message);
-        else {
+        if (error) {
+          toast.error(error.message);
+        } else {
           toast.success("Product deleted");
           setSelProd("");
           setCells([]);
@@ -375,8 +407,9 @@ export default function StockPage() {
       confirmLabel: "Delete",
       onConfirm: async () => {
         const { error } = await supabase.from("product_variants").delete().eq("id", variantId);
-        if (error) toast.error(error.message);
-        else {
+        if (error) {
+          toast.error(error.message);
+        } else {
           toast.success("Variant deleted");
           setCells((prev) =>
             prev.map((c) => {
@@ -391,42 +424,219 @@ export default function StockPage() {
     });
   }
 
-  // ------- SAVE STOCK ADDS -------
-  async function saveStockAdds() {
-    if (!selProd) return toast.error("Select a product first.");
+  // ------- helpers for variant fetch/create -------
+  async function getVariant(productId: string, sizeId: string, colorId: string) {
+    const { data, error } = await supabase
+      .from("product_variants")
+      .select("id, qty")
+      .eq("product_id", productId)
+      .eq("size_id", sizeId)
+      .eq("color_id", colorId)
+      .maybeSingle();
+    // Supabase returns PostgrestError | null, so this is safe without 'any'
+    if (error && error.code !== "PGRST116") throw error;
+    return (data as { id: string; qty: number | string | null } | null) ?? null;
+  }
 
-    // 1) Create missing variants
-    const missing = cells.filter((c) => c.addQty > 0 && !c.variantId);
-    if (missing.length > 0) {
-      const toInsert = missing.map((m) => ({
-        product_id: selProd,
-        size_id: m.sizeId,
-        color_id: m.colorId,
-        qty: 0,
-      }));
-      const { data, error } = await supabase
-        .from("product_variants")
-        .insert(toInsert)
-        .select("id, size_id, color_id");
-      if (error) {
-        toast.error(error.message);
-        return;
+  async function getOrCreateVariant(productId: string, sizeId: string, colorId: string) {
+    const found = await getVariant(productId, sizeId, colorId);
+    if (found?.id) return found.id;
+    const { data, error } = await supabase
+      .from("product_variants")
+      .insert({ product_id: productId, size_id: sizeId, color_id: colorId, qty: 0 })
+      .select("id")
+      .single();
+    if (error) throw error;
+    return (data as { id: string }).id;
+  }
+
+  // ------- Opening Stock (no size/color) -------
+  async function ensureDefaultSizeColor(): Promise<{ sizeId: string; colorId: string } | null> {
+    try {
+      // Size
+      const { data: sData, error: sErr } = await supabase
+        .from("sizes").select("id,name").eq("name", DEFAULT_SIZE_NAME).maybeSingle();
+      if (sErr && sErr.code !== "PGRST116") throw sErr;
+
+      let s = sData as { id: string; name: string } | null;
+      if (!s) {
+        const ins = await supabase.from("sizes").insert({ name: DEFAULT_SIZE_NAME }).select("id").single();
+        if (ins.error) throw ins.error;
+        s = ins.data as { id: string; name: string };
       }
-      const created = (data ?? []) as Array<{ id: string; size_id: string; color_id: string }>;
-      const mapNew = new Map<string, string>();
-      created.forEach((v) => mapNew.set(`${v.size_id}::${v.color_id}`, v.id));
-      setCells((prev) =>
-        prev.map((c) => (!c.variantId ? { ...c, variantId: mapNew.get(`${c.sizeId}::${c.colorId}`) ?? null } : c))
-      );
+      // Color
+      const { data: cData, error: cErr } = await supabase
+        .from("colors").select("id,name").eq("name", DEFAULT_COLOR_NAME).maybeSingle();
+      if (cErr && cErr.code !== "PGRST116") throw cErr;
+
+      let c = cData as { id: string; name: string } | null;
+      if (!c) {
+        const ins = await supabase.from("colors").insert({ name: DEFAULT_COLOR_NAME }).select("id").single();
+        if (ins.error) throw ins.error;
+        c = ins.data as { id: string; name: string };
+      }
+      return { sizeId: s.id, colorId: c.id };
+    } catch (e) {
+      toast.error(String(e));
+      return null;
+    }
+  }
+
+  async function addOpeningStock() {
+    if (!selProd || !openQty || Number(openQty) <= 0) {
+      toast.error("Pick product and enter a positive qty.");
+      return;
+    }
+    const basics = await ensureDefaultSizeColor();
+    if (!basics) return;
+
+    let variantId: string;
+    try {
+      variantId = await getOrCreateVariant(selProd, basics.sizeId, basics.colorId);
+    } catch (e) {
+      toast.error(String(e));
+      return;
     }
 
-    // 2) Insert purchases
-    const rows: PurchaseInsert[] = cells
-      .filter((c) => c.addQty > 0 && c.variantId)
-      .map((c) => ({ variant_id: c.variantId as string, qty: c.addQty, cost_price: Number(c.cost || 0) }));
+    const { error: pErr } = await supabase.from("purchases").insert({
+      variant_id: variantId,
+      qty: Number(openQty),
+      cost_price: Number(openCost || 0),
+    });
+    if (pErr) {
+      toast.error(pErr.message);
+      return;
+    }
 
+    if (openSell !== "") {
+      const { error: uErr } = await supabase
+        .from("products")
+        .update({ selling_price: Number(openSell || 0) })
+        .eq("id", selProd);
+      if (uErr) {
+        toast.error(uErr.message);
+        return;
+      }
+    }
+
+    toast.success("Opening stock added");
+    setOpenQty("");
+    setOpenCost("");
+    setOpenSell("");
+  }
+
+  // ------- Quick single-variant Add/Remove -------
+  async function adjustQuick() {
+    try {
+      if (!selCat || !selProd) {
+        toast.error("Pick category & product.");
+        return;
+      }
+      if (!qSize || !qColor) {
+        toast.error("Pick size & color.");
+        return;
+      }
+      if (!qQty || Number(qQty) <= 0) {
+        toast.error("Enter a positive qty.");
+        return;
+      }
+
+      if (qMode === "add") {
+        const vid = await getOrCreateVariant(selProd, qSize, qColor);
+        const { error } = await supabase.from("purchases").insert({
+          variant_id: vid,
+          qty: Number(qQty),
+          cost_price: Number(qCost || 0),
+        });
+        if (error) {
+          toast.error(error.message);
+          return;
+        }
+        toast.success("Stock added");
+      } else {
+        const v = await getVariant(selProd, qSize, qColor);
+        if (!v?.id) {
+          toast.error("Variant not found for removal");
+          return;
+        }
+        const current = Number(v.qty ?? 0);
+        if (Number(qQty) > current) {
+          toast.error(`Cannot remove ${qQty}; only ${current} in stock`);
+          return;
+        }
+        const { error } = await supabase.from("purchases").insert({
+          variant_id: v.id,
+          qty: -Number(qQty),
+          cost_price: Number(qCost || 0),
+        });
+        if (error) {
+          toast.error(error.message);
+          return;
+        }
+        toast.success("Stock removed");
+      }
+
+      setQQty("");
+      // setQCost("");
+    } catch (e) {
+      toast.error(String(e));
+    }
+  }
+
+  // ------- SAVE GRID CHANGES (optional matrix) -------
+  async function saveGridChanges() {
+    if (!selProd) {
+      toast.error("Select a product first.");
+      return;
+    }
+
+    if (gridMode === "add") {
+      const toCreate = cells.filter((c) => c.addQty > 0 && !c.variantId);
+      if (toCreate.length > 0) {
+        const inserted = toCreate.map((m) => ({
+          product_id: selProd, size_id: m.sizeId, color_id: m.colorId, qty: 0,
+        }));
+        const { data, error } = await supabase
+          .from("product_variants")
+          .insert(inserted)
+          .select("id, size_id, color_id");
+        if (error) {
+          toast.error(error.message);
+          return;
+        }
+        const created = (data ?? []) as Array<{ id: string; size_id: string; color_id: string }>;
+        const mapNew = new Map<string, string>();
+        created.forEach((v) => mapNew.set(`${v.size_id}::${v.color_id}`, v.id));
+        setCells((prev) =>
+          prev.map((c) => (!c.variantId ? { ...c, variantId: mapNew.get(`${c.sizeId}::${c.colorId}`) ?? null } : c))
+        );
+      }
+    }
+
+    if (gridMode === "remove") {
+      const invalidRem = cells.filter(
+        (c) => c.removeQty > 0 && (!c.variantId || c.removeQty > c.currentQty)
+      );
+      if (invalidRem.length > 0) {
+        const first = invalidRem[0];
+        toast.error(
+          `Cannot remove ${first.removeQty} from ${first.sizeName}/${first.colorName}. Not enough stock or missing variant.`
+        );
+        return;
+      }
+    }
+
+    const rows: PurchaseInsert[] = [];
+    for (const c of cells) {
+      if (gridMode === "add" && c.addQty > 0 && c.variantId) {
+        rows.push({ variant_id: c.variantId, qty: c.addQty, cost_price: Number(c.cost || 0) });
+      }
+      if (gridMode === "remove" && c.removeQty > 0 && c.variantId) {
+        rows.push({ variant_id: c.variantId, qty: -c.removeQty, cost_price: Number(c.cost || 0) });
+      }
+    }
     if (rows.length === 0) {
-      toast("Nothing to add");
+      toast("Nothing to save");
       return;
     }
 
@@ -435,10 +645,8 @@ export default function StockPage() {
       toast.error(perr.message);
       return;
     }
+    toast.success("Stock updated");
 
-    toast.success("Stock added successfully");
-
-    // 3) Refresh qty
     const { data: v2 } = await supabase
       .from("product_variants")
       .select("id, size_id, color_id, qty")
@@ -464,6 +672,7 @@ export default function StockPage() {
           variantId: hit?.id ?? c.variantId,
           currentQty: hit?.qty ?? c.currentQty,
           addQty: 0,
+          removeQty: 0,
         };
       })
     );
@@ -473,25 +682,153 @@ export default function StockPage() {
     <div className="space-y-6">
       <h1 className="text-xl font-bold">Add / Manage Stock</h1>
 
+      {/* Opening Stock (no size/color) */}
+      <section className="rounded-xl bg-white dark:bg-gray-800 shadow-card p-4">
+        <h2 className="font-semibold mb-3">Opening Stock (no size/color)</h2>
+        <div className="grid gap-3 grid-cols-1 md:grid-cols-6">
+          <label className="text-sm md:col-span-2">
+            <div className="mb-1 text-gray-500">Category</div>
+            <select
+              className="w-full rounded-md border bg-transparent p-2"
+              value={selCat}
+              onChange={(e) => setSelCat(e.target.value)}
+            >
+              <option value="">-- Select --</option>
+              {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </label>
+          <label className="text-sm md:col-span-2">
+            <div className="mb-1 text-gray-500">Product</div>
+            <select
+              className="w-full rounded-md border bg-transparent p-2"
+              value={selProd}
+              onChange={(e) => setSelProd(e.target.value)}
+              disabled={!selCat}
+            >
+              <option value="">-- Select --</option>
+              {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </label>
+          <label className="text-sm">
+            <div className="mb-1 text-gray-500">Qty</div>
+            <input type="number" min={0} className="w-full rounded-md border bg-transparent p-2"
+              value={openQty} onChange={(e) => setOpenQty(e.target.value === "" ? "" : Number(e.target.value))}
+              placeholder="e.g. 50" />
+          </label>
+          <label className="text-sm">
+            <div className="mb-1 text-gray-500">Cost</div>
+            <input type="number" step="0.01" min={0} className="w-full rounded-md border bg-transparent p-2"
+              value={openCost} onChange={(e) => setOpenCost(e.target.value === "" ? "" : Number(e.target.value))}
+              placeholder="e.g. 750.00" />
+          </label>
+          <label className="text-sm md:col-span-2">
+            <div className="mb-1 text-gray-500">Selling Price (optional)</div>
+            <input type="number" step="0.01" min={0} className="w-full rounded-md border bg-transparent p-2"
+              value={openSell} onChange={(e) => setOpenSell(e.target.value === "" ? "" : Number(e.target.value))}
+              placeholder="e.g. 1490.00" />
+          </label>
+          <div className="flex items-end">
+            <button onClick={addOpeningStock} className="rounded-md bg-primary text-white px-4 py-2"
+              disabled={!selProd || !openQty}>
+              Add Opening Stock
+            </button>
+          </div>
+        </div>
+        <p className="text-xs text-gray-500 mt-2">
+          Uses/creates one variant with <b>{DEFAULT_SIZE_NAME}</b> size and <b>{DEFAULT_COLOR_NAME}</b> color.
+        </p>
+      </section>
+
+      {/* Quick Add/Remove by pickers (Category→Product→Size→Color) */}
+      <section className="rounded-xl bg-white dark:bg-gray-800 shadow-card p-4">
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="font-semibold">Quick Add/Remove (by pickers)</h2>
+          <div className="flex gap-1 rounded-md border overflow-hidden">
+            <button onClick={() => setQMode("add")}
+              className={`px-3 py-1 text-sm ${qMode === "add" ? "bg-primary text-white" : "bg-white dark:bg-gray-800"}`}>
+              Add
+            </button>
+            <button onClick={() => setQMode("remove")}
+              className={`px-3 py-1 text-sm ${qMode === "remove" ? "bg-primary text-white" : "bg-white dark:bg-gray-800"}`}>
+              Remove
+            </button>
+          </div>
+        </div>
+
+        <div className="grid gap-3 grid-cols-1 md:grid-cols-6">
+          <label className="text-sm">
+            <div className="mb-1 text-gray-500">Category</div>
+            <select className="w-full rounded-md border bg-transparent p-2"
+              value={selCat}
+              onChange={(e) => { setSelCat(e.target.value); setSelProd(""); }}>
+              <option value="">-- Select --</option>
+              {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </label>
+
+          <label className="text-sm md:col-span-2">
+            <div className="mb-1 text-gray-500">Product</div>
+            <select className="w-full rounded-md border bg-transparent p-2"
+              value={selProd} onChange={(e) => setSelProd(e.target.value)} disabled={!selCat}>
+              <option value="">-- Select --</option>
+              {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </label>
+
+          <label className="text-sm">
+            <div className="mb-1 text-gray-500">Size</div>
+            <select className="w-full rounded-md border bg-transparent p-2"
+              value={qSize} onChange={(e) => setQSize(e.target.value)} disabled={!selProd}>
+              <option value="">-- Select --</option>
+              {sizes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </label>
+
+          <label className="text-sm">
+            <div className="mb-1 text-gray-500">Color</div>
+            <select className="w-full rounded-md border bg-transparent p-2"
+              value={qColor} onChange={(e) => setQColor(e.target.value)} disabled={!qSize}>
+              <option value="">-- Select --</option>
+              {colors.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </label>
+
+          <label className="text-sm">
+            <div className="mb-1 text-gray-500">{qMode === "add" ? "Add Qty" : "Remove Qty"}</div>
+            <input type="number" min={0} className="w-full rounded-md border bg-transparent p-2"
+              value={qQty} onChange={(e) => setQQty(e.target.value === "" ? "" : Number(e.target.value))}
+              placeholder="e.g. 10" />
+          </label>
+
+          <label className="text-sm">
+            <div className="mb-1 text-gray-500">Cost</div>
+            <input type="number" step="0.01" min={0} className="w-full rounded-md border bg-transparent p-2"
+              value={qCost} onChange={(e) => setQCost(e.target.value === "" ? "" : Number(e.target.value))}
+              placeholder="0.00" />
+          </label>
+
+          <div className="flex items-end">
+            <button onClick={adjustQuick} className="rounded-md bg-primary text-white px-4 py-2"
+              disabled={!selProd || !qSize || !qColor || !qQty}>
+              {qMode === "add" ? "Add Stock" : "Remove Stock"}
+            </button>
+          </div>
+        </div>
+
+        <p className="text-xs text-gray-500 mt-2">
+          Adds will auto-create the variant if missing. Removes require the variant to exist with enough stock.
+        </p>
+      </section>
+
       {/* Lookups manager */}
       <section className="rounded-xl bg-white dark:bg-gray-800 shadow-card p-4">
         <h2 className="font-semibold mb-3">Lookups</h2>
         <div className="grid gap-4 grid-cols-1 md:grid-cols-3">
-          <LookupCard
-            title="Categories"
-            placeholder="New category"
-            value={newCategory}
-            onChange={setNewCategory}
-            onAdd={addCategory}
-            onDelete={(item) => askDeleteCategory(item)}
-            items={categories}
-          />
-          <LookupCard
-            title="Sizes"
-            placeholder="New size (e.g. S, M, L)"
-            value={newSize}
-            onChange={setNewSize}
-            onAdd={addSize}
+          <LookupCard title="Categories" placeholder="New category"
+            value={newCategory} onChange={setNewCategory} onAdd={addCategory}
+            onDelete={(item) => askDeleteCategory(item)} items={categories}/>
+          <LookupCard title="Sizes" placeholder="New size (e.g. S, M, L)"
+            value={newSize} onChange={setNewSize} onAdd={addSize}
             onDelete={async (i) => {
               openConfirm({
                 title: "Delete size",
@@ -505,14 +842,9 @@ export default function StockPage() {
                 },
               });
             }}
-            items={sizes}
-          />
-          <LookupCard
-            title="Colors"
-            placeholder="New color (e.g. Black)"
-            value={newColor}
-            onChange={setNewColor}
-            onAdd={addColor}
+            items={sizes}/>
+          <LookupCard title="Colors" placeholder="New color (e.g. Black)"
+            value={newColor} onChange={setNewColor} onAdd={addColor}
             onDelete={async (i) => {
               openConfirm({
                 title: "Delete color",
@@ -526,106 +858,39 @@ export default function StockPage() {
                 },
               });
             }}
-            items={colors}
-          />
+            items={colors}/>
         </div>
         <p className="text-xs text-gray-500 mt-2">
-          Note: Creating/deleting lookups requires <b>admin</b>. Deleting categories in use will ask you to reassign.
+          Admin-only to create/delete lookups. Deleting categories in use will prompt a reassignment.
         </p>
       </section>
 
-      {/* Product creator */}
+      {/* Variant matrix with Add/Remove modes */}
       <section className="rounded-xl bg-white dark:bg-gray-800 shadow-card p-4">
-        <h2 className="font-semibold mb-3">Create Product</h2>
-        <div className="grid gap-3 grid-cols-1 md:grid-cols-6">
-          <label className="text-sm md:col-span-2">
-            <div className="mb-1 text-gray-500">Category</div>
-            <select
-              className="w-full rounded-md border bg-transparent p-2"
-              value={selCat}
-              onChange={(e) => setSelCat(e.target.value)}
-            >
-              <option value="">-- Select --</option>
-              {categories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="text-sm md:col-span-2">
-            <div className="mb-1 text-gray-500">Product name</div>
-            <input
-              className="w-full rounded-md border bg-transparent p-2"
-              value={pName}
-              onChange={(e) => setPName(e.target.value)}
-              placeholder="EssenceFit Sports Shorts"
-            />
-          </label>
-          <label className="text-sm">
-            <div className="mb-1 text-gray-500">SKU</div>
-            <input
-              className="w-full rounded-md border bg-transparent p-2"
-              value={pSku}
-              onChange={(e) => setPSku(e.target.value)}
-              placeholder="EF-SS-001"
-            />
-          </label>
-          <label className="text-sm">
-            <div className="mb-1 text-gray-500">Default Cost</div>
-            <input
-              type="number"
-              step="0.01"
-              className="w-full rounded-md border bg-transparent p-2"
-              value={pCost}
-              onChange={(e) => setPCost(e.target.value === "" ? "" : Number(e.target.value))}
-              placeholder="750.00"
-            />
-          </label>
-          <label className="text-sm">
-            <div className="mb-1 text-gray-500">Default Selling</div>
-            <input
-              type="number"
-              step="0.01"
-              className="w-full rounded-md border bg-transparent p-2"
-              value={pSell}
-              onChange={(e) => setPSell(e.target.value === "" ? "" : Number(e.target.value))}
-              placeholder="1490.00"
-            />
-          </label>
-          <div className="flex items-end gap-2">
-            <button onClick={createProduct} className="rounded-md bg-primary text-white px-4 py-2">
-              Create Product
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="font-semibold">Variant Stock (Grid: {gridMode === "add" ? "Add" : "Remove"})</h2>
+          <div className="flex gap-1 rounded-md border overflow-hidden">
+            <button onClick={() => setGridMode("add")}
+              className={`px-3 py-1 text-sm ${gridMode === "add" ? "bg-primary text-white" : "bg-white dark:bg-gray-800"}`}>
+              Add
             </button>
-            {!!selProd && (
-              <button onClick={askDeleteProduct} className="rounded-md border px-3 py-2">
-                Delete Selected Product
-              </button>
-            )}
+            <button onClick={() => setGridMode("remove")}
+              className={`px-3 py-1 text-sm ${gridMode === "remove" ? "bg-primary text-white" : "bg-white dark:bg-gray-800"}`}>
+              Remove
+            </button>
           </div>
         </div>
-      </section>
 
-      {/* Product selection + matrix */}
-      <section className="rounded-xl bg-white dark:bg-gray-800 shadow-card p-4">
-        <h2 className="font-semibold mb-3">Add Quantities by Size × Color</h2>
         <div className="grid gap-3 grid-cols-1 md:grid-cols-3">
           <label className="text-sm">
             <div className="mb-1 text-gray-500">Category</div>
             <select
               className="w-full rounded-md border bg-transparent p-2"
               value={selCat}
-              onChange={(e) => {
-                setSelCat(e.target.value);
-                setSelProd("");
-              }}
+              onChange={(e) => { setSelCat(e.target.value); setSelProd(""); }}
             >
               <option value="">-- Select --</option>
-              {categories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
+              {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </label>
           <label className="text-sm md:col-span-2">
@@ -637,11 +902,7 @@ export default function StockPage() {
               disabled={!selCat}
             >
               <option value="">-- Select --</option>
-              {products.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
+              {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </label>
         </div>
@@ -656,7 +917,8 @@ export default function StockPage() {
                   <th className="text-left py-1">Size</th>
                   <th className="text-left py-1">Color</th>
                   <th className="text-left py-1">Current</th>
-                  <th className="text-left py-1">Add Qty</th>
+                  {gridMode === "add" && <th className="text-left py-1">Add Qty</th>}
+                  {gridMode === "remove" && <th className="text-left py-1">Remove Qty</th>}
                   <th className="text-left py-1">Cost</th>
                   <th className="text-left py-1">Actions</th>
                 </tr>
@@ -670,52 +932,41 @@ export default function StockPage() {
                       <td className="py-2 px-2">{c.sizeName}</td>
                       <td className="py-2 px-2">
                         {c.colorName}
-                        {!c.variantId && (
-                          <span className="ml-2 text-[10px] px-2 py-0.5 rounded bg-gray-200 dark:bg-gray-700">
-                            new
-                          </span>
-                        )}
+                        {!c.variantId && <span className="ml-2 text-[10px] px-2 py-0.5 rounded bg-gray-200 dark:bg-gray-700">new</span>}
                       </td>
                       <td className="py-2 px-2">{c.currentQty}</td>
+                      {gridMode === "add" && (
+                        <td className="py-2 px-2">
+                          <input type="number" min={0} className="w-24 rounded-md border bg-transparent p-1"
+                            value={c.addQty}
+                            onChange={(e) => {
+                              const v = Number(e.target.value || 0);
+                              setCells((prev) => prev.map((row, i) => (i === idx ? { ...row, addQty: v } : row)));
+                            }}/>
+                        </td>
+                      )}
+                      {gridMode === "remove" && (
+                        <td className="py-2 px-2">
+                          <input type="number" min={0} className="w-24 rounded-md border bg-transparent p-1"
+                            value={c.removeQty}
+                            onChange={(e) => {
+                              const v = Number(e.target.value || 0);
+                              setCells((prev) => prev.map((row, i) => (i === idx ? { ...row, removeQty: v } : row)));
+                            }}/>
+                        </td>
+                      )}
                       <td className="py-2 px-2">
-                        <input
-                          type="number"
-                          min={0}
-                          className="w-24 rounded-md border bg-transparent p-1"
-                          value={c.addQty}
-                          onChange={(e) => {
-                            const v = Number(e.target.value || 0);
-                            setCells((prev) =>
-                              prev.map((row, i) => (i === idx ? { ...row, addQty: v } : row))
-                            );
-                          }}
-                        />
-                      </td>
-                      <td className="py-2 px-2">
-                        <input
-                          type="number"
-                          step="0.01"
-                          min={0}
-                          className="w-28 rounded-md border bg-transparent p-1"
+                        <input type="number" step="0.01" min={0} className="w-28 rounded-md border bg-transparent p-1"
                           value={c.cost}
                           onChange={(e) => {
                             const v = Number(e.target.value || 0);
-                            setCells((prev) =>
-                              prev.map((row, i) => (i === idx ? { ...row, cost: v } : row))
-                            );
-                          }}
-                        />
+                            setCells((prev) => prev.map((row, i) => (i === idx ? { ...row, cost: v } : row)));
+                          }}/>
                       </td>
                       <td className="py-2 px-2">
                         {canDeleteVariant ? (
                           <button
-                            onClick={() =>
-                              askDeleteVariant(
-                                c.variantId as string,
-                                key,
-                                `${c.sizeName} / ${c.colorName}`
-                              )
-                            }
+                            onClick={() => askDeleteVariant(c.variantId as string, key, `${c.sizeName} / ${c.colorName}`)}
                             className="rounded-md px-2 py-1 text-red-600 hover:text-red-700 hover:underline"
                             title="Delete variant (qty must be 0)"
                           >
@@ -730,27 +981,34 @@ export default function StockPage() {
                 })}
                 {cells.length === 0 && (
                   <tr>
-                    <td className="py-3 text-gray-500" colSpan={6}>
+                    <td className="py-3 text-gray-500" colSpan={7}>
                       No sizes/colors yet. Add them above first.
                     </td>
                   </tr>
                 )}
               </tbody>
             </table>
-            <div className="mt-3 flex items-center gap-2">
-              <button
-                onClick={() => setCells((prev) => prev.map((c) => ({ ...c, addQty: 0 })))}
-                className="rounded-md border px-3 py-2"
-              >
-                Clear Adds
-              </button>
-              <button onClick={saveStockAdds} className="rounded-md bg-primary text-white px-4 py-2">
-                Save Stock Adds
+
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {gridMode === "add" && (
+                <button onClick={() => setCells((prev) => prev.map((c) => ({ ...c, addQty: 0 })))}
+                        className="rounded-md border px-3 py-2">
+                  Clear Adds
+                </button>
+              )}
+              {gridMode === "remove" && (
+                <button onClick={() => setCells((prev) => prev.map((c) => ({ ...c, removeQty: 0 })))}
+                        className="rounded-md border px-3 py-2">
+                  Clear Removes
+                </button>
+              )}
+              <button onClick={saveGridChanges} className="rounded-md bg-primary text-white px-4 py-2">
+                {gridMode === "add" ? "Save Adds" : "Save Removes"}
               </button>
             </div>
+
             <p className="text-xs text-gray-500 mt-2">
-              Saving creates any missing variants, then inserts rows into <code>purchases</code>.
-              Triggers update <code>product_variants.qty</code> and write <code>stock_history</code>.
+              The grid shows only <b>{gridMode}</b> inputs to avoid confusion. Adds can create variants; removes need existing stock.
             </p>
           </div>
         )}
@@ -764,7 +1022,6 @@ export default function StockPage() {
         onCancel={closeConfirm}
         onConfirm={confirm.onConfirm}
       />
-
       <ReassignDialog
         open={reassign.open}
         from={reassign.from}
@@ -798,9 +1055,7 @@ function LookupCard(props: {
           value={value}
           onChange={(e) => onChange(e.target.value)}
         />
-        <button onClick={onAdd} className="rounded-md bg-primary text-white px-3">
-          Add
-        </button>
+        <button onClick={onAdd} className="rounded-md bg-primary text-white px-3">Add</button>
       </div>
       <div className="mt-2 max-h-40 overflow-auto border rounded-md p-2 text-xs">
         {items.map((i) => (
@@ -882,25 +1137,17 @@ function ReassignDialog(props: {
           <div className="mt-4">
             <label className="text-sm block">
               <span className="mb-1 block text-gray-500">Move to category</span>
-              <select
-                className="w-full rounded-md border bg-transparent p-2"
-                value={toId}
-                onChange={(e) => onChangeTo(e.target.value)}
-              >
+              <select className="w-full rounded-md border bg-transparent p-2" value={toId}
+                onChange={(e) => onChangeTo(e.target.value)}>
                 <option value="">-- Choose target --</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
+                {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </label>
           </div>
           <div className="mt-4 flex justify-end gap-2">
             <button onClick={onCancel} className="rounded-md border px-4 py-2">Cancel</button>
-            <button
-              onClick={onConfirm}
-              disabled={!toId}
-              className="rounded-md bg-primary text-white px-4 py-2 disabled:opacity-50"
-            >
+            <button onClick={onConfirm} disabled={!toId}
+              className="rounded-md bg-primary text-white px-4 py-2 disabled:opacity-50">
               Reassign & Delete
             </button>
           </div>
