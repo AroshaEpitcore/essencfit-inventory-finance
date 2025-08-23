@@ -18,9 +18,9 @@ const nav = [
 export default function Sidebar() {
   const pathname = usePathname();
   return (
-    <aside className="hidden md:flex w-64 shrink-0 flex-col bg-[#0b1220] text-white min-h-screen sticky top-0">
+    <aside className="hidden md:flex w-64 shrink-0 flex-col bg-[#0b1220] text-white h-screen sticky top-0 overflow-hidden">
       <div className="p-4 text-lg font-bold">EssenceFit Admin</div>
-      <nav className="px-2 space-y-2">
+      <nav className="px-2 space-y-2 flex-1 overflow-y-auto">
         {nav.map(item => {
           const Icon = item.icon;
           const active = pathname.startsWith(item.href);
