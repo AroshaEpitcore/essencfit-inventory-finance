@@ -19,6 +19,7 @@ export default function Topbar() {
     setTheme(saved);
     document.documentElement.classList.toggle("dark", saved === "dark");
   }, []);
+  
   function toggleTheme() {
     const next = theme === "light" ? "dark" : "light";
     setTheme(next);
@@ -61,7 +62,7 @@ export default function Topbar() {
     <header className="sticky top-0 z-40 bg-white/70 dark:bg-gray-900/70 backdrop-blur border-b">
       <div className="h-14 flex items-center justify-between px-4">
         {/* Left zone: brand (mobile) + sidebar toggle (desktop) */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-shrink-0">
           <div className="md:hidden font-semibold">EssenceFit</div>
 
           {/* Desktop sidebar toggle */}
@@ -75,8 +76,17 @@ export default function Topbar() {
           </button>
         </div>
 
+        {/* Middle zone: Moving Announcement */}
+        <div className="flex-1 mx-4 overflow-hidden">
+          <div className="relative h-6 flex items-center">
+            <div className="absolute whitespace-nowrap animate-scroll text-sm font-medium text-gray-700 dark:text-gray-300">
+              🎉 Welcome to EssenceFit! • New features available now • Get 20% off premium plans • Join our community today! • 
+            </div>
+          </div>
+        </div>
+
         {/* Right zone */}
-        <div className="flex items-center gap-3 ml-auto">
+        <div className="flex items-center gap-3 flex-shrink-0">
           <span className="hidden sm:block text-sm text-gray-600 dark:text-gray-300">
             {profile.name ?? "User"} • {profile.role ?? "staff"}
           </span>

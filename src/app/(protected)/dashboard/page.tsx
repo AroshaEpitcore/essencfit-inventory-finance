@@ -272,26 +272,6 @@ export default async function Dashboard() {
         )}
       </section>
 
-<section className="grid gap-4 grid-cols-1 sm:grid-cols-2">
-  <Link
-    href="/orders"
-    className="rounded-xl bg-white dark:bg-gray-800 shadow-card p-4 hover:shadow-md transition"
-  >
-    <div className="text-sm text-gray-500">Orders</div>
-    <div className="text-xl font-semibold mt-1">Pipeline</div>
-    <div className="text-xs text-gray-400 mt-2">Capture WhatsApp orders & move stages</div>
-  </Link>
-
-  <Link
-    href="/reports"
-    className="rounded-xl bg-white dark:bg-gray-800 shadow-card p-4 hover:shadow-md transition"
-  >
-    <div className="text-sm text-gray-500">Orders</div>
-    <div className="text-xl font-semibold mt-1">Reports</div>
-    <div className="text-xs text-gray-400 mt-2">Filter by date/status, export CSV</div>
-  </Link>
-</section>
-
       {/* Low Stock table */}
       <section className="rounded-xl bg-white dark:bg-gray-800 shadow-card p-4">
         <h2 className="font-semibold mb-2">Low Stock</h2>
