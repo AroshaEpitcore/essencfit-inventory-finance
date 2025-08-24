@@ -1,5 +1,6 @@
 import { createServerSupabase } from "@/lib/supabase/server";
 import { endOfMonth, startOfMonth } from "date-fns";
+import Link from "next/link";
 
 // ---------- Row types from your schema ----------
 type SaleLine = {
@@ -270,6 +271,26 @@ export default async function Dashboard() {
           </div>
         )}
       </section>
+
+<section className="grid gap-4 grid-cols-1 sm:grid-cols-2">
+  <Link
+    href="/orders"
+    className="rounded-xl bg-white dark:bg-gray-800 shadow-card p-4 hover:shadow-md transition"
+  >
+    <div className="text-sm text-gray-500">Orders</div>
+    <div className="text-xl font-semibold mt-1">Pipeline</div>
+    <div className="text-xs text-gray-400 mt-2">Capture WhatsApp orders & move stages</div>
+  </Link>
+
+  <Link
+    href="/reports"
+    className="rounded-xl bg-white dark:bg-gray-800 shadow-card p-4 hover:shadow-md transition"
+  >
+    <div className="text-sm text-gray-500">Orders</div>
+    <div className="text-xl font-semibold mt-1">Reports</div>
+    <div className="text-xs text-gray-400 mt-2">Filter by date/status, export CSV</div>
+  </Link>
+</section>
 
       {/* Low Stock table */}
       <section className="rounded-xl bg-white dark:bg-gray-800 shadow-card p-4">

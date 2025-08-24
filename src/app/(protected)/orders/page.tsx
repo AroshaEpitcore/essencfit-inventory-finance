@@ -2,6 +2,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import toast from "react-hot-toast";
+import Link from "next/link";
+
 import clsx from "clsx";
 
 type SizeRow  = { id: string; name: string };
@@ -479,10 +481,17 @@ export default function OrdersPage() {
                   <div className="flex justify-between"><span>Subtotal</span><span>Rs. {new Intl.NumberFormat().format(o.subtotal)}</span></div>
                   <div className="flex justify-between"><span>Discount</span><span>- Rs. {new Intl.NumberFormat().format(o.discount)}</span></div>
                   <div className="flex justify-between"><span>Delivery</span><span>Rs. {new Intl.NumberFormat().format(o.delivery_fee)}</span></div>
-                  <div className="flex justify-between font-semibold"><span>Total</span><span>Rs. {new Intl.NumberFormat().format(o.total)}</span></div>
+                  <div className="flex justify-between font-semibold mb-5"><span>Total</span><span>Rs. {new Intl.NumberFormat().format(o.total)}</span></div>
+                  <Link
+                    href={`/receipts/${o.id}`}
+                    className="rounded-md bg-primary text-white px-4 py-2 mt-3"
+                    >
+                    View Receipt
+                    </Link>
                 </div>
 
                 {o.notes && <div className="mt-2 text-xs text-gray-500">Note: {o.notes}</div>}
+                
               </div>
             ))}
           </div>
