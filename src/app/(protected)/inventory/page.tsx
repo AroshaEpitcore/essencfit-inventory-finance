@@ -34,6 +34,17 @@ type RawVariantRow = {
   color: { name: string } | { name: string }[] | null;
 };
 
+type ColorAvailRow = { color: string | null; qty: number | string | null };
+
+// NEW: Product quantity card type
+type ProductQtyCard = {
+  id: string;
+  name: string;
+  sku: string | null;
+  total_qty: number;
+  low_stock_variants: number;
+};
+
 export default function Inventory() {
   const supabase = createClient();
 
@@ -47,6 +58,16 @@ export default function Inventory() {
   const [selSize, setSelSize] = useState("");
   const [selColor, setSelColor] = useState("");
   const [qty, setQty] = useState<number | null>(null);
+
+  // NEW: Product quantity cards
+  const [productCards, setProductCards] = useState<ProductQtyCard[]>([]);
+  const [loadingCards, setLoadingCards] = useState(false);
+
+  // "Colors by Category & Size" filters/results
+  const [selCatForColors, setSelCatForColors] = useState("");
+  const [selSizeForColors, setSelSizeForColors] = useState("");
+  const [colorsAvail, setColorsAvail] = useState<Array<{ color: string; qty: number }>>([]);
+  const [loadingColorsAvail, setLoadingColorsAvail] = useState(false);
 
   // Role
   const [role, setRole] = useState<"admin" | "staff" | "unknown">("unknown");
@@ -89,6 +110,7 @@ export default function Inventory() {
         setSelProd("");
         setProduct(null);
         setVariants([]);
+        setProductCards([]);
         return;
       }
       const { data, error } = await supabase
@@ -98,8 +120,68 @@ export default function Inventory() {
         .order("name");
       if (error) toast.error(error.message);
       setProductsOpt(((data ?? []) as Array<{ id: string; name: string }>).map((r) => ({ id: r.id, name: r.name })));
+      
+      // Load product cards when category changes
+      loadProductCards(selCat);
     })();
   }, [supabase, selCat]);
+
+  // NEW: Load product quantity cards
+  async function loadProductCards(categoryId: string) {
+    if (!categoryId) {
+      setProductCards([]);
+      return;
+    }
+    
+    setLoadingCards(true);
+    try {
+      // Get products with their total quantities and low stock count
+      const { data: products, error: prodError } = await supabase
+        .from("products")
+        .select("id, name, sku")
+        .eq("category_id", categoryId)
+        .order("name");
+      
+      if (prodError) throw new Error(prodError.message);
+      
+      const cards: ProductQtyCard[] = [];
+      
+      for (const prod of products || []) {
+        // Get all variants for this product
+        const { data: variants, error: varError } = await supabase
+          .from("product_variants")
+          .select("qty, min_qty_alert")
+          .eq("product_id", prod.id);
+        
+        if (varError) {
+          console.error(`Error loading variants for product ${prod.id}:`, varError);
+          continue;
+        }
+        
+        const totalQty = (variants || []).reduce((sum, v) => sum + Number(v.qty || 0), 0);
+        const lowStockCount = (variants || []).filter(v => {
+          const qty = Number(v.qty || 0);
+          const minAlert = Number(v.min_qty_alert || 0);
+          return qty > 0 && qty <= minAlert;
+        }).length;
+        
+        cards.push({
+          id: prod.id,
+          name: prod.name,
+          sku: prod.sku,
+          total_qty: totalQty,
+          low_stock_variants: lowStockCount,
+        });
+      }
+      
+      setProductCards(cards);
+    } catch (e) {
+      toast.error(`Error loading product cards: ${e}`);
+      setProductCards([]);
+    } finally {
+      setLoadingCards(false);
+    }
+  }
 
   // When product changes, load product details and variants
   useEffect(() => {
@@ -154,7 +236,47 @@ export default function Inventory() {
     })();
   }, [supabase, selProd]);
 
-  // Quick check
+  // Auto-check qty when selections change
+  useEffect(() => {
+    (async () => {
+      if (!selProd || !selSize || !selColor) {
+        setQty(null);
+        return;
+      }
+      
+      const sizeName = sizes.find((s) => s.id === selSize)?.name ?? "";
+      const colorName = colors.find((c) => c.id === selColor)?.name ?? "";
+      const prodName = productsOpt.find((p) => p.id === selProd)?.name ?? "";
+
+      if (!sizeName || !colorName || !prodName) {
+        setQty(null);
+        return;
+      }
+
+      try {
+        const { data, error } = await supabase
+          .from("v_variant_lookup")
+          .select("qty")
+          .eq("product_name", prodName)
+          .eq("size", sizeName)
+          .eq("color", colorName)
+          .maybeSingle();
+
+        if (error) {
+          console.error("Error fetching quantity:", error);
+          setQty(null);
+          return;
+        }
+        
+        setQty(Number((data as { qty?: number | string | null } | null)?.qty ?? 0));
+      } catch (e) {
+        console.error("Error fetching quantity:", e);
+        setQty(null);
+      }
+    })();
+  }, [supabase, selProd, selSize, selColor, sizes, colors, productsOpt]);
+
+  // Quick check (qty for a specific Product+Size+Color) - kept for manual refresh if needed
   async function checkQty() {
     if (!selProd || !selSize || !selColor) return toast.error("Pick product, size, color");
     const sizeName = sizes.find((s) => s.id === selSize)?.name ?? "";
@@ -189,6 +311,9 @@ export default function Inventory() {
     if (error) return toast.error(error.message);
     toast.success("Product saved");
     setProductsOpt((prev) => prev.map((o) => (o.id === product.id ? { ...o, name: product.name } : o)));
+    
+    // Refresh product cards
+    if (selCat) loadProductCards(selCat);
   }
 
   // -------------------- VARIANTS (create/update/delete) --------------------
@@ -239,6 +364,9 @@ export default function Inventory() {
       };
     });
     setVariants(rows);
+    
+    // Refresh product cards
+    if (selCat) loadProductCards(selCat);
   }
 
   async function saveVariant(v: VariantRow) {
@@ -261,13 +389,75 @@ export default function Inventory() {
     if (error) return toast.error(error.message);
     toast.success("Variant deleted");
     setVariants((prev) => prev.filter((x) => x.id !== v.id));
+    
+    // Refresh product cards
+    if (selCat) loadProductCards(selCat);
+  }
+
+  // -------------------- COLORS by CATEGORY + SIZE --------------------
+  async function loadColorsByCategorySize() {
+    if (!selCatForColors || !selSizeForColors) {
+      return toast.error("Pick Category and Size");
+    }
+    const catName = categories.find((c) => c.id === selCatForColors)?.name ?? "";
+    const sizeName = sizes.find((s) => s.id === selSizeForColors)?.name ?? "";
+    if (!catName || !sizeName) return toast.error("Invalid filters");
+
+    setLoadingColorsAvail(true);
+    try {
+      const { data, error } = await supabase
+        .from("v_variant_lookup")
+        .select("color, qty")
+        .eq("category", catName)
+        .eq("size", sizeName)
+        .returns<ColorAvailRow[]>();
+      if (error) throw new Error(error.message);
+
+      // Aggregate qty by color (some rows may repeat per product)
+      const map = new Map<string, number>();
+      for (const r of data ?? []) {
+        const col = (r.color ?? "-").toString();
+        const q = Number(r.qty ?? 0);
+        map.set(col, (map.get(col) ?? 0) + q);
+      }
+      // Sort by name; show all (including zero), but you can filter >0 if you prefer
+      const arr = Array.from(map.entries())
+        .map(([color, sum]) => ({ color, qty: sum }))
+        .sort((a, b) => a.color.localeCompare(b.color));
+
+      setColorsAvail(arr);
+    } catch (e) {
+      toast.error(String(e));
+      setColorsAvail([]);
+    } finally {
+      setLoadingColorsAvail(false);
+    }
+  }
+
+  function exportColorsCSV() {
+    if (colorsAvail.length === 0) return;
+    const headers = ["color", "qty"];
+    const esc = (v: unknown) => {
+      if (v === null || v === undefined) return "";
+      const s = String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const body = colorsAvail.map((r) => `${esc(r.color)},${esc(r.qty)}`).join("\n");
+    const csv = `${headers.join(",")}\n${body}`;
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "colors_by_category_size.csv";
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   return (
     <div className="space-y-6">
       <h1 className="text-xl font-bold">Inventory</h1>
 
-      {/* CHECK INVENTORY */}
+      {/* CHECK INVENTORY (specific Product+Size+Color) */}
       <section className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 rounded-xl bg-white dark:bg-gray-800 shadow-card p-4">
         <Select label="Category" options={categories} value={selCat} onChange={setSelCat} />
         <Select label="Product" options={productsOpt} value={selProd} onChange={setSelProd} />
@@ -283,6 +473,141 @@ export default function Inventory() {
             Availability: <span className="font-semibold">{qty} pcs</span>
           </div>
         )}
+      </section>
+
+      {/* NEW: PRODUCT QUANTITY CARDS */}
+      {selCat && (
+        <section className="rounded-xl bg-white dark:bg-gray-800 shadow-card p-4">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-semibold">Product Quantities</h2>
+            <button
+              onClick={() => loadProductCards(selCat)}
+              className="rounded-md border px-3 py-2 text-sm"
+              disabled={loadingCards}
+            >
+              {loadingCards ? "Loading..." : "Refresh"}
+            </button>
+          </div>
+          
+          {loadingCards ? (
+            <div className="flex justify-center py-8">
+              <div className="text-gray-500">Loading product quantities...</div>
+            </div>
+          ) : productCards.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">
+              No products found in this category
+            </div>
+          ) : (
+            <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {productCards.map((card) => (
+                <div
+                  key={card.id}
+                  className="border rounded-lg p-4 bg-gray-50 dark:bg-gray-900 hover:shadow-md transition-shadow cursor-pointer"
+                  onClick={() => setSelProd(card.id)}
+                >
+                  <div className="flex items-start justify-between mb-2">
+                    <h3 className="font-medium text-sm leading-tight">{card.name}</h3>
+                    <div className="text-2xl font-bold text-primary ml-2">
+                      {card.total_qty}
+                    </div>
+                  </div>
+                  
+                  {card.sku && (
+                    <div className="text-xs text-gray-500 mb-2">
+                      SKU: {card.sku}
+                    </div>
+                  )}
+                  
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-gray-600">Total Quantity</span>
+                    {card.low_stock_variants > 0 && (
+                      <span className="bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200 px-2 py-1 rounded-full">
+                        {card.low_stock_variants} low stock
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* COLORS AVAILABLE by Category + Size (across all products) */}
+      <section className="rounded-xl bg-white dark:bg-gray-800 shadow-card p-4">
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold">Colors by Category &amp; Size</h2>
+          <div className="flex gap-2">
+            <button
+              onClick={loadColorsByCategorySize}
+              className="rounded-md border px-3 py-2"
+              disabled={loadingColorsAvail}
+            >
+              {loadingColorsAvail ? "Loading..." : "Show Colors"}
+            </button>
+            <button
+              onClick={exportColorsCSV}
+              className="rounded-md border px-3 py-2"
+              disabled={colorsAvail.length === 0}
+              title={colorsAvail.length === 0 ? "Nothing to export" : "Export CSV"}
+            >
+              Export CSV
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-3 grid gap-3 grid-cols-1 md:grid-cols-4">
+          <Field label="Category">
+            <select
+              className="w-full rounded-md border bg-transparent p-2"
+              value={selCatForColors}
+              onChange={(e) => setSelCatForColors(e.target.value)}
+            >
+              <option value="">-- Select --</option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Size">
+            <select
+              className="w-full rounded-md border bg-transparent p-2"
+              value={selSizeForColors}
+              onChange={(e) => setSelSizeForColors(e.target.value)}
+            >
+              <option value="">-- Select --</option>
+              {sizes.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+
+        {/* Results */}
+        <div className="mt-4">
+          {colorsAvail.length === 0 ? (
+            <p className="text-sm text-gray-500">
+              Pick a Category and Size, then click <b>Show Colors</b> to see all available colors across products.
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {colorsAvail.map((r) => (
+                <span
+                  key={r.color}
+                  className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm bg-gray-50 dark:bg-gray-900"
+                  title={`${r.qty} pcs`}
+                >
+                  <span className="font-medium">{r.color}</span>
+                  <span className="text-xs text-gray-500">{r.qty}</span>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
       </section>
 
       {/* CRUD AREA */}

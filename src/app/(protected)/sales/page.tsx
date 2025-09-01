@@ -40,6 +40,7 @@ export default function SalesPage() {
 
   const [selCat, setSelCat] = useState("");
   const [selProd, setSelProd] = useState("");
+  const [selSize, setSelSize] = useState(""); // NEW
 
   // defaults for sale rows
   const [method, setMethod] = useState<PaymentMethod>("cash");
@@ -79,10 +80,11 @@ export default function SalesPage() {
     })();
   }, [supabase]);
 
-  // products by category (also get product default selling_price here)
+  // products by category
   useEffect(() => {
     (async () => {
       setSelProd("");
+      setSelSize(""); // reset size when category changes
       setRows([]);
       if (!selCat) return;
       const { data, error } = await supabase
@@ -96,17 +98,21 @@ export default function SalesPage() {
     })();
   }, [supabase, selCat]);
 
-  // variants for selected product (simple columns only)
+  // variants for selected product (conditionally filter by size)
   useEffect(() => {
     (async () => {
       setRows([]);
       if (!selProd) return;
-      const { data, error } = await supabase
+
+      const base = supabase
         .from("product_variants")
         .select("id, qty, selling_price, size_id, color_id")
-        .eq("product_id", selProd)
-        .order("id")
-        .returns<VariantRow[]>();
+        .eq("product_id", selProd);
+
+      const { data, error } = selSize
+        ? await base.eq("size_id", selSize).order("id").returns<VariantRow[]>()
+        : await base.order("id").returns<VariantRow[]>();
+
       if (error) return toast.error(error.message);
 
       const sizeMap = new Map(sizes.map((s) => [s.id, s.name]));
@@ -124,8 +130,7 @@ export default function SalesPage() {
       });
       setRows(normalized);
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [supabase, selProd, sizes, colors, productDefaultPrice]);
+  }, [supabase, selProd, selSize, sizes, colors, productDefaultPrice]);
 
   async function sellOne(variantId: string, price: number) {
     const { error } = await supabase.from("sales").insert({
@@ -176,11 +181,19 @@ export default function SalesPage() {
 
   async function refreshStock() {
     if (!selProd) return;
-    const { data, error } = await supabase
+
+    const base = supabase
       .from("product_variants")
       .select("id, qty, selling_price")
-      .eq("product_id", selProd)
-      .returns<Array<{ id: string; qty: number | string | null; selling_price: number | string | null }>>();
+      .eq("product_id", selProd);
+
+    const { data, error } = selSize
+      ? await base
+          .eq("size_id", selSize)
+          .returns<Array<{ id: string; qty: number | string | null; selling_price: number | string | null }>>()
+      : await base
+          .returns<Array<{ id: string; qty: number | string | null; selling_price: number | string | null }>>();
+
     if (error) return toast.error(error.message);
 
     const map = new Map<string, { qty: number; price: number }>();
@@ -199,7 +212,6 @@ export default function SalesPage() {
   // ---------------- Backfill logic ----------------
   async function getOrCreateNAId(table: "sizes" | "colors"): Promise<string> {
     type IdRow = { id: string };
-    // look for NA_NAME
     const { data: found } = await supabase
       .from(table)
       .select("id")
@@ -208,7 +220,6 @@ export default function SalesPage() {
       .returns<IdRow | null>();
     if (found?.id) return found.id;
 
-    // create it
     const { data: created, error } = await supabase
       .from(table)
       .insert({ name: NA_NAME })
@@ -224,7 +235,6 @@ export default function SalesPage() {
     const sizeId = await getOrCreateNAId("sizes");
     const colorId = await getOrCreateNAId("colors");
 
-    // find existing variant
     const { data: existing } = await supabase
       .from("product_variants")
       .select("id")
@@ -235,7 +245,6 @@ export default function SalesPage() {
       .returns<IdRow | null>();
     if (existing?.id) return existing.id;
 
-    // create variant with qty 0
     const { data: created, error } = await supabase
       .from("product_variants")
       .insert({ product_id: productId, size_id: sizeId, color_id: colorId, qty: 0 })
@@ -258,8 +267,6 @@ export default function SalesPage() {
     try {
       const variantId = await ensureNaVariant(selProd);
 
-      // 1) Try to insert a backdated purchase (adds qty) so stock won't go negative
-      //    Prefer setting created_at; if not allowed, fallback without it.
       const createdAt = new Date(`${bfDate}T00:00:00.000Z`).toISOString();
       let pErr: string | null = null;
 
@@ -267,29 +274,25 @@ export default function SalesPage() {
         .from("purchases")
         .insert({ variant_id: variantId, qty, cost_price: cost, created_at: createdAt });
       if (p1.error) {
-        // fallback: without created_at (RLS might forbid overriding)
         const p2 = await supabase.from("purchases").insert({ variant_id: variantId, qty, cost_price: cost });
         if (p2.error) pErr = p2.error.message;
       }
       if (pErr) throw new Error(pErr);
 
-      // 2) Insert the sale on the chosen date (removes same qty)
       const { error: sErr } = await supabase.from("sales").insert({
         variant_id: variantId,
         qty,
         selling_price: sell,
-        payment_method: "cash", // historical default (change if you want)
+        payment_method: "cash",
         payment_status: "paid",
-        date: bfDate, // your sales table already has 'date' column
+        date: bfDate,
       });
       if (sErr) {
-        // attempt a simple rollback so stock doesn't stay positive
         await supabase.from("purchases").delete().order("created_at", { ascending: false }).limit(1);
         throw new Error(sErr.message);
       }
 
       toast.success("Backfilled historical sale");
-      // Clear inputs
       setBfQty("");
       setBfCost("");
       setBfSell("");
@@ -307,7 +310,7 @@ export default function SalesPage() {
 
       {/* Filters */}
       <section className="rounded-xl bg-white dark:bg-gray-800 shadow-card p-4">
-        <div className="grid gap-3 grid-cols-1 md:grid-cols-4">
+        <div className="grid gap-3 grid-cols-1 md:grid-cols-5">
           <label className="text-sm">
             <div className="mb-1 text-gray-500">Category</div>
             <select
@@ -323,6 +326,7 @@ export default function SalesPage() {
               ))}
             </select>
           </label>
+
           <label className="text-sm md:col-span-2">
             <div className="mb-1 text-gray-500">Product</div>
             <select
@@ -339,6 +343,25 @@ export default function SalesPage() {
               ))}
             </select>
           </label>
+
+          {/* NEW: Size filter */}
+          <label className="text-sm">
+            <div className="mb-1 text-gray-500">Size</div>
+            <select
+              className="w-full rounded-md border bg-transparent p-2"
+              value={selSize}
+              onChange={(e) => setSelSize(e.target.value)}
+              disabled={!selProd}
+            >
+              <option value="">All sizes</option>
+              {sizes.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
           <div className="text-sm">
             <div className="mb-1 text-gray-500">Defaults</div>
             <div className="flex gap-2">
@@ -368,7 +391,7 @@ export default function SalesPage() {
         </p>
       </section>
 
-      {/* NEW: Backfill pre-system sales */}
+      {/* Backfill pre-system sales */}
       <section className="rounded-xl bg-white dark:bg-gray-800 shadow-card p-4">
         <h2 className="font-semibold mb-3">Backfill pre-system sales (no colors)</h2>
         <div className="grid gap-3 grid-cols-1 md:grid-cols-5">
@@ -435,7 +458,7 @@ export default function SalesPage() {
       {/* Table */}
       <section className="rounded-xl bg-white dark:bg-gray-800 shadow-card p-4">
         {!selProd ? (
-          <p className="text-sm text-gray-500">Pick a category and product to begin.</p>
+          <p className="text-sm text-gray-500">Pick a category, product (and optional size) to begin.</p>
         ) : (
           <>
             <div className="overflow-x-auto">
