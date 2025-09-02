@@ -53,7 +53,14 @@ function formatDate(dateStr: string | null) {
   });
 }
 
-export default async function ReceiptPage({ params }: { params: { id: string } }) {
+export default async function ReceiptPage({ 
+  params 
+}: { 
+  params: Promise<{ id: string }> 
+}) {
+  // Await the params Promise
+  const { id } = await params;
+  
   const supabase = await createServerSupabase();
 
   // Order header
@@ -62,7 +69,7 @@ export default async function ReceiptPage({ params }: { params: { id: string } }
     .select(
       "id, customer_name, subtotal, discount, delivery_fee, total, order_date, phone, address, notes"
     )
-    .eq("id", params.id)
+    .eq("id", id)
     .maybeSingle<OrderRow>();
 
   if (oErr) throw new Error(oErr.message);
@@ -74,7 +81,7 @@ export default async function ReceiptPage({ params }: { params: { id: string } }
   const withPrice = await supabase
     .from("order_items")
     .select("id, qty, price, size:sizes(name), color:colors(name)")
-    .eq("order_id", params.id)
+    .eq("order_id", id)
     .returns<ItemWithPrice[]>();
 
   if (withPrice.error) {
@@ -82,7 +89,7 @@ export default async function ReceiptPage({ params }: { params: { id: string } }
       const withoutPrice = await supabase
         .from("order_items")
         .select("id, qty, size:sizes(name), color:colors(name)")
-        .eq("order_id", params.id)
+        .eq("order_id", id)
         .returns<ItemNoPrice[]>();
 
       if (withoutPrice.error) throw new Error(withoutPrice.error.message);

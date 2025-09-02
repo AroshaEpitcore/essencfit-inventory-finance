@@ -13,6 +13,7 @@ import {
   Settings,
   Package,
   ShoppingCart,
+  Banknote,
 } from "lucide-react";
 import clsx from "clsx";
 
@@ -23,6 +24,7 @@ const nav = [
   { href: "/sales", label: "Sales", icon: Receipt },
   { href: "/orders", label: "Orders", icon: ShoppingCart },
   { href: "/expenses", label: "Expenses", icon: Wallet },
+  { href: "/finance", label: "Finance", icon: Banknote }, 
   { href: "/reports", label: "Reports", icon: FilePieChart },
   { href: "/suppliers", label: "Suppliers", icon: Truck },
   { href: "/settings", label: "Settings", icon: Settings },
@@ -53,9 +55,7 @@ export default function Sidebar() {
       <aside
         className={clsx(
           "hidden md:flex shrink-0 flex-col bg-[#0b1220] text-white h-screen sticky top-0",
-          // prevent horizontal scroll; allow vertical only
           "overflow-y-auto overflow-x-hidden",
-          // smooth width animation
           "transition-[width] duration-300 ease-in-out",
           collapsed ? "w-16" : "w-64"
         )}
@@ -81,7 +81,7 @@ export default function Sidebar() {
             EssenceFit Admin
           </span>
 
-          {/* Short title (EF) — stacked on top, fades in when collapsed */}
+          {/* Short title (EF) */}
           <span
             aria-hidden={!collapsed}
             className={clsx(
@@ -99,7 +99,7 @@ export default function Sidebar() {
             EF
           </span>
 
-          {/* Accessible name regardless of state */}
+          {/* Accessible name */}
           <span className="sr-only">EssenceFit Admin</span>
         </div>
 
