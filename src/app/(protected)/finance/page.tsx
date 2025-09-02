@@ -17,30 +17,28 @@ type VProductProfitRow = {
 
 type HandoverRowIn = {
   id: string;
-  amount: number | string | null;
+  amount: number;        // normalized to number on load
   manager_name: string;
-  noted_at: string; // ISO
+  noted_at: string;      // ISO
 };
 
 type HandoverRowOut = HandoverRowIn & {
-  remaining_after?: number; // computed client-side
+  remaining_after?: number; // computed client-side for display
 };
 
 type UsedRow = {
   id: string;
-  amount: number | string | null;
+  amount: number;        // normalized to number on load
   reason: string;
-  noted_at: string; // ISO
+  noted_at: string;      // ISO
 };
-
-type SaleLine = { total_price: number | string | null };
 
 type HandoverMoneyResult = {
   id: string;
   amount: number;
   manager_name: string;
   noted_at: string;
-  remaining_after: number; // RPC can still return it; we use it for toast only
+  remaining_after: number; // for toast only
 };
 
 type UseCashResult = {
@@ -48,8 +46,10 @@ type UseCashResult = {
   amount: number;
   reason: string;
   noted_at: string;
-  remaining_after: number; // RPC can still return it; we use it for toast only
+  remaining_after: number; // for toast only
 };
+
+type SaleLine = { total_price: number | string | null };
 
 /* ========= Helpers ========= */
 
@@ -84,16 +84,14 @@ function getErrorMessage(e: unknown): string {
 export default function FinancePage() {
   const supabase = createClient();
 
-  // Totals
-  const [allTimeSales, setAllTimeSales] = useState<number>(0); // matches Dashboard All-time Sales
+  // Totals (summary cards)
+  const [allTimeSales, setAllTimeSales] = useState<number>(0); // matches Dashboard "All-time Sales"
   const [totalHanded, setTotalHanded] = useState<number>(0);
   const [totalUsed, setTotalUsed] = useState<number>(0);
 
+  // Derived: Remaining = Sales − Handed − Used
   const remainingBalance = useMemo(
-    () =>
-      Number(
-        (toNum(allTimeSales) - toNum(totalHanded) - toNum(totalUsed)).toFixed(2)
-      ),
+    () => Number((toNum(allTimeSales) - toNum(totalHanded) - toNum(totalUsed)).toFixed(2)),
     [allTimeSales, totalHanded, totalUsed]
   );
 
@@ -131,41 +129,27 @@ export default function FinancePage() {
 
   async function loadTotals() {
     try {
-      // 1) All-time Sales (Gross)
-      const { data: salesRows, error: sErr } = await supabase
+      // 1) All-time Sales (view-only)
+      const { data: salesRows, error: salesErr } = await supabase
         .from("sales")
-        .select("total_price")
-        .returns<SaleLine[]>();
-      if (sErr) throw sErr;
-      const allSales = (salesRows ?? []).reduce<number>(
-        (acc, r) => acc + toNum(r.total_price),
-        0
-      );
+        .select("total_price");
+      if (salesErr) throw salesErr;
+      const allSales = (salesRows ?? []).reduce((a, r: SaleLine) => a + toNum(r.total_price), 0);
       setAllTimeSales(allSales);
 
-      // 2) Total handed over
-      const { data: handedRows, error: hErr } = await supabase
+      // 2) Handed Over total
+      const { data: handedRows, error: handedErr } = await supabase
         .from("finance_handovers")
-        .select("amount")
-        .returns<Array<{ amount: number | string | null }>>();
-      if (hErr) throw hErr;
-      const handed = (handedRows ?? []).reduce<number>(
-        (acc, r) => acc + toNum(r.amount),
-        0
-      );
-      setTotalHanded(handed);
+        .select("amount");
+      if (handedErr) throw handedErr;
+      setTotalHanded((handedRows ?? []).reduce((a, r) => a + toNum((r as { amount: unknown }).amount), 0));
 
-      // 3) Total used
-      const { data: usedRows, error: uErr } = await supabase
+      // 3) Cash Used total
+      const { data: usedRows, error: usedErr } = await supabase
         .from("finance_used")
-        .select("amount")
-        .returns<Array<{ amount: number | string | null }>>();
-      if (uErr) throw uErr;
-      const used = (usedRows ?? []).reduce<number>(
-        (acc, r) => acc + toNum(r.amount),
-        0
-      );
-      setTotalUsed(used);
+        .select("amount");
+      if (usedErr) throw usedErr;
+      setTotalUsed((usedRows ?? []).reduce((a, r) => a + toNum((r as { amount: unknown }).amount), 0));
     } catch (e) {
       toast.error(getErrorMessage(e));
     }
@@ -204,7 +188,7 @@ export default function FinancePage() {
         .from("finance_handovers")
         .select("id, amount, manager_name, noted_at")
         .order("noted_at", { ascending: false })
-        .returns<HandoverRowIn[]>();
+        .returns<Array<{ id: string; amount: number | string | null; manager_name: string; noted_at: string }>>();
       if (error) throw error;
 
       setHandoversRaw(
@@ -229,7 +213,7 @@ export default function FinancePage() {
         .from("finance_used")
         .select("id, amount, reason, noted_at")
         .order("noted_at", { ascending: true }) // ascending helps cumulative calc
-        .returns<UsedRow[]>();
+        .returns<Array<{ id: string; amount: number | string | null; reason: string; noted_at: string }>>();
       if (error) throw error;
 
       setUsedList(
@@ -247,7 +231,7 @@ export default function FinancePage() {
     }
   }
 
-  /* ---- Derived computation for remaining_after per handover ---- */
+  /* ---- Derived: remaining_after per handover ---- */
 
   function recomputeHandoverRemaining() {
     if (!handoversRaw.length) {
@@ -264,36 +248,26 @@ export default function FinancePage() {
       (a, b) => new Date(a.noted_at).getTime() - new Date(b.noted_at).getTime()
     );
 
-    // Prefix through used while iterating handovers
     let usedIdx = 0;
     let usedCum = 0;
     let handedCum = 0;
 
     const outAsc: HandoverRowOut[] = [];
     for (const h of hAsc) {
-      // advance used up to h.noted_at
       const hTime = new Date(h.noted_at).getTime();
-      while (
-        usedIdx < uAsc.length &&
-        new Date(uAsc[usedIdx].noted_at).getTime() <= hTime
-      ) {
+      while (usedIdx < uAsc.length && new Date(uAsc[usedIdx].noted_at).getTime() <= hTime) {
         usedCum += toNum(uAsc[usedIdx].amount);
         usedIdx++;
       }
-
       handedCum += toNum(h.amount);
       const remaining_after = allTimeSales - handedCum - usedCum;
-
       outAsc.push({ ...h, remaining_after });
     }
 
     // Keep display order DESC (newest first)
-    setHandovers(
-      outAsc.sort(
-        (a, b) =>
-          new Date(b.noted_at).getTime() - new Date(a.noted_at).getTime()
-      )
-    );
+    setHandovers(outAsc.sort(
+      (a, b) => new Date(b.noted_at).getTime() - new Date(a.noted_at).getTime()
+    ));
   }
 
   /* ---- Actions ---- */
@@ -309,11 +283,7 @@ export default function FinancePage() {
         .single<HandoverMoneyResult>();
       if (error) throw error;
 
-      toast.success(
-        `Handover recorded. Remaining: ${fmtCurrency(
-          toNum(data.remaining_after)
-        )}`
-      );
+      toast.success(`Handover recorded. Remaining: ${fmtCurrency(toNum(data.remaining_after))}`);
 
       setHandoverAmount("");
       await Promise.all([loadHandovers(), loadTotals()]);
@@ -333,11 +303,7 @@ export default function FinancePage() {
         .single<UseCashResult>();
       if (error) throw error;
 
-      toast.success(
-        `Cash used recorded. Remaining: ${fmtCurrency(
-          toNum(data.remaining_after)
-        )}`
-      );
+      toast.success(`Cash used recorded. Remaining: ${fmtCurrency(toNum(data.remaining_after))}`);
       setUsedAmount("");
       setUsedReason("");
       await Promise.all([loadUsed(), loadTotals()]);
@@ -354,20 +320,10 @@ export default function FinancePage() {
 
       {/* SUMMARY BAR */}
       <section className="grid gap-4 grid-cols-1 sm:grid-cols-4">
-        <SummaryCard
-          label="All-time Sales (Gross)"
-          value={fmtCurrency(allTimeSales)}
-        />
-        <SummaryCard
-          label="Handed Over (Total)"
-          value={fmtCurrency(totalHanded)}
-        />
+        <SummaryCard label="All-time Sales (Gross)" value={fmtCurrency(allTimeSales)} />
+        <SummaryCard label="Handed Over (Total)" value={fmtCurrency(totalHanded)} />
         <SummaryCard label="Cash Used (Total)" value={fmtCurrency(totalUsed)} />
-        <SummaryCard
-          label="Remaining Balance"
-          value={fmtCurrency(remainingBalance)}
-          highlight
-        />
+        <SummaryCard label="Remaining Balance" value={fmtCurrency(remainingBalance)} highlight />
       </section>
 
       {/* PRODUCT PROFIT */}
@@ -388,29 +344,18 @@ export default function FinancePage() {
         ) : (
           <div className="grid gap-3 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
             {profits.map((p) => (
-              <div
-                key={p.product_id}
-                className="border rounded-lg p-4 bg-gray-50 dark:bg-gray-900"
-              >
+              <div key={p.product_id} className="border rounded-lg p-4 bg-gray-50 dark:bg-gray-900">
                 <div className="text-sm text-gray-500 mb-1">Product</div>
                 <div className="font-semibold">{p.product_name}</div>
 
                 <div className="grid grid-cols-2 gap-2 mt-3 text-sm">
-                  <MetricCard
-                    label="Units Sold"
-                    value={String(p.total_units_sold)}
-                  />
-                  <MetricCard
-                    label="Revenue"
-                    value={fmtCurrency(p.total_revenue)}
-                  />
+                  <MetricCard label="Units Sold" value={String(p.total_units_sold)} />
+                  <MetricCard label="Revenue" value={fmtCurrency(p.total_revenue)} />
                   <MetricCard label="Cost" value={fmtCurrency(p.total_cost)} />
                   <MetricCard
                     label="Net Profit"
                     value={fmtCurrency(p.net_profit)}
-                    colorClass={
-                      p.net_profit >= 0 ? "text-emerald-600" : "text-red-600"
-                    }
+                    colorClass={p.net_profit >= 0 ? "text-emerald-600" : "text-red-600"}
                   />
                 </div>
               </div>
@@ -445,10 +390,7 @@ export default function FinancePage() {
             />
           </Field>
           <div className="md:col-span-2 flex items-end gap-2">
-            <button
-              onClick={submitHandover}
-              className="rounded-md bg-primary text-white px-4 py-2"
-            >
+            <button onClick={submitHandover} className="rounded-md bg-primary text-white px-4 py-2">
               Record Handover
             </button>
             <button
@@ -469,32 +411,22 @@ export default function FinancePage() {
             <p className="text-sm text-gray-500">No handovers recorded yet.</p>
           ) : (
             handovers.map((h) => (
-              <div
-                key={h.id}
-                className="border rounded-lg p-4 bg-gray-50 dark:bg-gray-900"
-              >
+              <div key={h.id} className="border rounded-lg p-4 bg-gray-50 dark:bg-gray-900">
                 <div className="flex items-start justify-between">
                   <div>
                     <div className="text-sm text-gray-500">Amount</div>
-                    <div className="text-lg font-semibold">
-                      {fmtCurrency(toNum(h.amount))}
-                    </div>
+                    <div className="text-lg font-semibold">{fmtCurrency(toNum(h.amount))}</div>
                   </div>
                   <div className="text-right">
                     <div className="text-sm text-gray-500">Remaining After</div>
                     <div className="text-lg font-semibold">
-                      {fmtCurrency(
-                        toNum(h.remaining_after ?? remainingBalance)
-                      )}
+                      {fmtCurrency(toNum(h.remaining_after ?? remainingBalance))}
                     </div>
                   </div>
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
                   <MetricCard label="Manager" value={h.manager_name} />
-                  <MetricCard
-                    label="Date/Time"
-                    value={new Date(h.noted_at).toLocaleString()}
-                  />
+                  <MetricCard label="Date/Time" value={new Date(h.noted_at).toLocaleString()} />
                 </div>
               </div>
             ))
@@ -528,10 +460,7 @@ export default function FinancePage() {
             />
           </Field>
           <div className="md:col-span-2 flex items-end gap-2">
-            <button
-              onClick={submitUsed}
-              className="rounded-md bg-primary text-white px-4 py-2"
-            >
+            <button onClick={submitUsed} className="rounded-md bg-primary text-white px-4 py-2">
               Record Cash Used
             </button>
             <button
@@ -552,24 +481,16 @@ export default function FinancePage() {
             <p className="text-sm text-gray-500">No cash usage recorded yet.</p>
           ) : (
             usedList.map((u) => (
-              <div
-                key={u.id}
-                className="border rounded-lg p-4 bg-gray-50 dark:bg-gray-900"
-              >
+              <div key={u.id} className="border rounded-lg p-4 bg-gray-50 dark:bg-gray-900">
                 <div className="flex items-start justify-between">
                   <div>
                     <div className="text-sm text-gray-500">Amount</div>
-                    <div className="text-lg font-semibold">
-                      {fmtCurrency(toNum(u.amount))}
-                    </div>
+                    <div className="text-lg font-semibold">{fmtCurrency(toNum(u.amount))}</div>
                   </div>
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
                   <MetricCard label="Reason" value={u.reason} />
-                  <MetricCard
-                    label="Date/Time"
-                    value={new Date(u.noted_at).toLocaleString()}
-                  />
+                  <MetricCard label="Date/Time" value={new Date(u.noted_at).toLocaleString()} />
                 </div>
               </div>
             ))
@@ -594,9 +515,7 @@ function SummaryCard({
   return (
     <div
       className={`rounded-lg border p-4 ${
-        highlight
-          ? "bg-emerald-50 dark:bg-emerald-900/20"
-          : "bg-gray-50 dark:bg-gray-900"
+        highlight ? "bg-emerald-50 dark:bg-emerald-900/20" : "bg-gray-50 dark:bg-gray-900"
       }`}
     >
       <div className="text-sm text-gray-500">{label}</div>
@@ -605,13 +524,7 @@ function SummaryCard({
   );
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="text-sm">
       <div className="mb-1 text-gray-500">{label}</div>
