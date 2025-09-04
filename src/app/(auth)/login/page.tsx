@@ -1,13 +1,12 @@
 "use client";
-import { Suspense, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import toast from "react-hot-toast";
 
 type Role = "admin" | "staff";
 
-// Separate component that uses useSearchParams
-function LoginForm() {
+export default function LoginPage() {
   const supabase = createClient();
   const router = useRouter();
   const sp = useSearchParams();
@@ -63,48 +62,21 @@ function LoginForm() {
   }
 
   return (
-    <div className="w-full max-w-md rounded-2xl bg-white dark:bg-gray-800 shadow-card p-6">
-      <h1 className="text-2xl font-bold">Sign in</h1>
-      <p className="text-sm text-gray-500 mb-6">Inventory + Finance Dashboard</p>
-      <form onSubmit={signIn} className="space-y-3">
-        <input className="w-full rounded-md border p-2 bg-transparent"
-               placeholder="Email" value={email} onChange={(e)=>setEmail(e.target.value)} />
-        <input className="w-full rounded-md border p-2 bg-transparent"
-               placeholder="Password" type="password" value={password} onChange={(e)=>setPassword(e.target.value)} />
-        <button className="w-full rounded-md bg-primary text-white py-2">Sign in</button>
-      </form>
-      <button onClick={() => router.push("/register")} className="mt-3 w-full rounded-md border py-2">
-        Create account
-      </button>
-    </div>
-  );
-}
-
-// Loading fallback component
-function LoginLoading() {
-  return (
-    <div className="w-full max-w-md rounded-2xl bg-white dark:bg-gray-800 shadow-card p-6">
-      <div className="animate-pulse">
-        <div className="h-8 bg-gray-200 dark:bg-gray-600 rounded mb-2"></div>
-        <div className="h-4 bg-gray-200 dark:bg-gray-600 rounded mb-6 w-3/4"></div>
-        <div className="space-y-3">
-          <div className="h-10 bg-gray-200 dark:bg-gray-600 rounded"></div>
-          <div className="h-10 bg-gray-200 dark:bg-gray-600 rounded"></div>
-          <div className="h-10 bg-gray-200 dark:bg-gray-600 rounded"></div>
-          <div className="h-10 bg-gray-200 dark:bg-gray-600 rounded"></div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Main page component
-export default function LoginPage() {
-  return (
     <main className="min-h-screen grid place-items-center p-6">
-      <Suspense fallback={<LoginLoading />}>
-        <LoginForm />
-      </Suspense>
+      <div className="w-full max-w-md rounded-2xl bg-white dark:bg-gray-800 shadow-card p-6">
+        <h1 className="text-2xl font-bold">Sign in</h1>
+        <p className="text-sm text-gray-500 mb-6">Inventory + Finance Dashboard</p>
+        <form onSubmit={signIn} className="space-y-3">
+          <input className="w-full rounded-md border p-2 bg-transparent"
+                 placeholder="Email" value={email} onChange={(e)=>setEmail(e.target.value)} />
+          <input className="w-full rounded-md border p-2 bg-transparent"
+                 placeholder="Password" type="password" value={password} onChange={(e)=>setPassword(e.target.value)} />
+          <button className="w-full rounded-md bg-primary text-white py-2">Sign in</button>
+        </form>
+        <button onClick={() => router.push("/register")} className="mt-3 w-full rounded-md border py-2">
+          Create account
+        </button>
+      </div>
     </main>
   );
 }
